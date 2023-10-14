@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Terminator
+Exec=terminator --title Terminal
+Icon=terminator
+Terminal=false
+StartupNotify=false

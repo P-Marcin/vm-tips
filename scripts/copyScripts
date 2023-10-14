@@ -1,0 +1,105 @@
+#!/bin/bash
+# COPY SCRIPTS AND CONFIGS
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+
+main() {
+  options "${ARGS[@]}"
+  logStep ">" "Copy"
+  copyScripts
+  copyBashAliases
+  copyHook
+  copyDaemonJson || true
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0}
+
+Copy scripts and configs
+EOF
+  exit 1
+}
+
+copyScripts() {
+  local sources=( "cleanVm" "copyrightCosts" "functions.sh" "setupDevDependencies" "setupPackages" "setupVm" "shrinkVm" "versions" "windowProps" )
+  local target="${HOME}/bin"
+  logOperation ">>" "scripts to ${target}"
+  (
+    if [[ -d "${target}" ]]; then
+      rm -r "${target:?}"
+    fi
+    mkdir "${target}" \
+      && cp "${sources[@]}" "${target}" \
+      && chmod +x "${target}"/*
+  ) &
+  logProgress
+  printf "%s\n" "${sources[@]}"
+}
+
+copyBashAliases() {
+  local source=".bash_aliases"
+  local target="${HOME}"
+  if isUpdateNeededForFile "config/${source}" "${target}/${source}"; then
+    logOperation ">>" "${source} to ${target}"
+    (
+      cp "config/${source}" "${target}"
+    ) &
+    logProgress
+  fi
+}
+
+copyHook() {
+  local source="network-restart-hook.sh"
+  local target="/etc/vmware-tools/scripts/resume-vm-default.d"
+  if isUpdateNeededForFile "config/${source}" "${target}/${source}"; then
+    logOperation ">>" "${source} to ${target}"
+    (
+      if [[ -d "${target}" ]]; then
+        sudo rm -r "${target:?}"
+      fi
+      sudo mkdir "${target}" \
+        && sudo cp "config/${source}" "${target}" \
+        && sudo chmod +x "${target}/${source}"
+    ) &
+    logProgress
+  fi
+}
+
+copyDaemonJson() {
+  local source="daemon.json"
+  local target="/etc/docker"
+  if [[ ! -d "${target}" ]]; then
+    logWarn "Cannot copy ${source}"
+    logWarn "Docker is not installed yet"
+    return 1
+  fi
+  if isUpdateNeededForFile "config/${source}" "${target}/${source}"; then
+    logOperation ">>" "${source} to ${target}"
+    (
+      sudo cp "config/${source}" "${target}" \
+        && sudo systemctl restart docker >/dev/null
+    ) &
+    logProgress
+  fi
+}
+
+main

@@ -1,0 +1,132 @@
+#!/bin/bash
+# SETUP PACKAGES
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+
+main() {
+  options "${ARGS[@]}"
+  validateOperatingSystemSupport
+  installPackages
+  installNpmPackages
+  setupGedit
+  setupTerminator
+  validateSystemRestartRequired
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0}
+
+Setup packages
+EOF
+  exit 1
+}
+
+installPackages() {
+  packages=( "curl" "exa" "gedit" "jq" "mugshot" "neofetch" "npm" "terminator" "vlc" "xdotool" "xprop")
+  for package in "${packages[@]}"; do
+    installPackage "${package}" || true
+  done
+}
+
+installPackage() {
+  local package="${1}"
+  logStep ">" "Install ${package^}"
+  if ! isPackageInstalled "${package}"; then
+    sudo apt-get install "${package}" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logAlreadyDone "\n"
+  fi
+}
+
+installNpmPackages() {
+  packages=( "yarn")
+  for package in "${packages[@]}"; do
+    installNpmPackage "${package}" || true
+  done
+}
+
+installNpmPackage() {
+  local package="${1}"
+  logStep ">" "Install ${package^}"
+  if ! isPackageInstalled "${package}"; then
+    sudo npm install -g "${package}" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logAlreadyDone "\n"
+  fi
+}
+
+setupGedit() {
+  if ! isPackageInstalled "gedit"; then
+    return 0
+  fi
+  declare -A geditProperties
+  geditProperties["org.gnome.gedit.preferences.editor"]="tabs-size:4 insert-spaces:true scheme:oblivion"
+  geditProperties["org.gnome.gedit.preferences.ui"]="statusbar-visible:false"
+  for schema in "${!geditProperties[@]}"; do
+    configuration="${geditProperties[${schema}]}"
+    for keyValue in ${configuration}; do
+      IFS=':' read -r key value <<< "${keyValue}"
+      if setGsettingsProperty "${schema}" "${key}" "${value}"; then
+        if [[ "${isFirstIteration}" != "false" ]]; then
+          logStep ">" "Setup gEdit"
+          local isFirstIteration="false"
+          local isTriggered="true"
+        fi
+        logStep ">>" "Schema ${schema}: set ${key} to ${value}"
+      fi
+    done
+  done
+  if [[ "${isTriggered}" == "true" ]]; then
+    logDone "\n"
+  fi
+}
+
+setGsettingsProperty() {
+  schema="${1}"
+  key="${2}"
+  value="${3}"
+  if ! isPackageInstalled "gsettings"; then
+    logError "You don't have \"gsettings\" installed"
+    exit 1
+  fi
+  if [[ "$(gsettings get "${schema}" "${key}" | tr -d "'" | sed "s/uint.* //")" != "${value}" ]]; then
+    gsettings set "${schema}" "${key}" "${value}"
+  else
+    return 10
+  fi
+}
+
+setupTerminator() {
+  if ! isPackageInstalled "terminator"; then
+    return 0
+  fi
+  if appendToFile "${HOME}/.config/xfce4/helpers.rc" "TerminalEmulator=terminator"; then
+    logStep ">" "Setup Terminator as default terminal"
+    logDone "\n"
+  fi
+}
+
+main

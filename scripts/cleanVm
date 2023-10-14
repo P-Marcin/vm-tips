@@ -1,0 +1,159 @@
+#!/bin/bash
+# Cleans VM
+
+#################
+### Functions ###
+#################
+
+areYouSure() {
+  echo "Close all applications before executing the script"
+  read -p "Do you want to clean VM now? [y/n]: " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    [[ "$0" == "$BASH_SOURCE" ]] && exit 1 || return 1
+  fi
+}
+
+removeOldKernels() {
+  step "Remove old kernels"
+  sudo apt --purge autoremove
+}
+
+cleanAptCache() {
+  step "Clean Apt Cache"
+  sudo du -sh /var/cache/apt/archives
+  sudo apt clean
+  sudo du -sh /var/cache/apt/archives
+}
+
+cleanCache() {
+  step "Clean Cache"
+  rm -rf /home/javowiec/.cache/*
+}
+
+cleanPicturesAndDownloads() {
+  step "Clean Pictures and Downloads"
+  rm -rf /home/javowiec/Obrazy/*
+  rm -rf /home/javowiec/Pobrane/*
+}
+
+cleanMavenRepository() {
+  step "Clean Maven Repository"
+  rm -rf /home/javowiec/.m2/repository/*
+  rm -rf /home/javowiec/.m2/repository/.cache/*
+}
+
+cleanSmartTomcat() {
+  step "Clean Smart Tomcat"
+  rm -r /home/javowiec/.SmartTomcat
+}
+
+cleanSdkMan() {
+  step "Flush SdkMan"
+  export SDKMAN_DIR="/opt/sdkman"
+  [[ -s "/opt/sdkman/bin/sdkman-init.sh" ]] && source "/opt/sdkman/bin/sdkman-init.sh"
+  sdk flush
+}
+
+cleanDocker() {
+  step "Clean Docker"
+  if [[ -n "$(docker container ls -a -q)" ]]; then
+    docker container stop "$(docker container ls -a -q)"
+  fi
+  docker system prune -a -f
+}
+
+cleanMinikube() {
+  step "Clean Minikube"
+  minikube delete --purge
+  minikube config set driver docker
+  minikube config set kubernetes-version "$(kubectl version --client --short | sed 's/Client Version: v//')"
+}
+
+cleanKafkaAndZookeeper() {
+  step "Clean Kafka & Zookeeper"
+  rm -r /tmp/kafka-logs
+  rm -r /tmp/zookeeper/
+}
+
+cleanBackups() {
+  step "Clean Backups"
+  sudo rm -rf /var/backups/*
+}
+
+cleanLogs() {
+  step "Clean Logs"
+  sudo find /var/log -type f -name "*.gz" -exec du -sh {} \; -exec rm -f {} \;
+  sudo find /var/log -type f -regex ".*\.[0-9]$" -exec du -sh {} \; -exec rm -f {} \;
+  sudo find /var/log -type f -regex ".*\.[0-9].log$" -exec du -sh {} \; -exec rm -f {} \;
+  sudo journalctl --rotate
+  sudo journalctl --vacuum-size=1M
+  sudo truncate -s 0 /var/log/apt/history.log
+  sudo truncate -s 0 /var/log/apt/term.log
+  sudo truncate -s 0 /var/log/cups/access_log
+  sudo truncate -s 0 /var/log/installer/casper.log
+  sudo truncate -s 0 /var/log/installer/debug
+  sudo truncate -s 0 /var/log/installer/media-info
+  sudo truncate -s 0 /var/log/installer/partman
+  sudo truncate -s 0 /var/log/installer/syslog
+  sudo truncate -s 0 /var/log/installer/telemetry
+  sudo truncate -s 0 /var/log/unattended-upgrades/unattended-upgrades.log
+  sudo truncate -s 0 /var/log/unattended-upgrades/unattended-upgrades-dpkg.log
+  sudo truncate -s 0 /var/log/unattended-upgrades/unattended-upgrades-shutdown.log
+  sudo truncate -s 0 /var/log/vmware/rc.local.log
+  sudo truncate -s 0 /var/log/alternatives.log
+  sudo truncate -s 0 /var/log/apport.log
+  sudo truncate -s 0 /var/log/auth.log
+  sudo truncate -s 0 /var/log/bootstrap.log
+  sudo truncate -s 0 /var/log/btmp
+  sudo truncate -s 0 /var/log/cron.log
+  sudo truncate -s 0 /var/log/dmesg
+  sudo truncate -s 0 /var/log/dpkg.log
+  sudo truncate -s 0 /var/log/faillog
+  sudo truncate -s 0 /var/log/fontconfig.log
+  sudo truncate -s 0 /var/log/gpu-manager.log
+  sudo truncate -s 0 /var/log/kern.log
+  sudo truncate -s 0 /var/log/lastlog
+  sudo truncate -s 0 /var/log/syslog
+  sudo truncate -s 0 /var/log/ubuntu-advantage.log
+  sudo truncate -s 0 /var/log/ufw.log
+  sudo truncate -s 0 /var/log/vmware-install.log
+  sudo truncate -s 0 /var/log/vmware-network.log
+  sudo truncate -s 0 /var/log/vmware-vmsvc-root.log
+  sudo truncate -s 0 /var/log/vmware-vmtoolsd-root.log
+  sudo truncate -s 0 /var/log/wtmp
+}
+
+cleanBashHistory() {
+  step "Clean .bash_history"
+  history -cw
+  truncate -s 0 /home/javowiec/.bash_history
+  sudo truncate -s 0 /root/.bash_history
+}
+
+step() {
+  echo -e $(yellow "\n### ${1^^} ###\n")
+}
+
+yellow() {
+  echo "\033[1;33m${1}\033[0m"
+}
+
+###############
+### Process ###
+###############
+
+areYouSure
+removeOldKernels
+cleanAptCache
+cleanCache
+cleanPicturesAndDownloads
+cleanMavenRepository
+cleanSmartTomcat
+cleanSdkMan
+cleanDocker
+cleanMinikube
+cleanKafkaAndZookeeper
+cleanBackups
+cleanLogs
+cleanBashHistory

@@ -1,0 +1,90 @@
+#!/bin/bash -i
+# DISPLAY DEPENDENCY VERSIONS INSTALLED ON THE SYSTEM
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+set +H          # DISABLE https://www.gnu.org/software/bash/manual/html_node/History-Interaction.html
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+readonly SEPARATOR=$(printf "%.s#" {1..47})
+
+main() {
+  options "${ARGS[@]}"
+  logSection "SYSTEM"
+  logVersion "UBUNTU" "$(getUbuntuVersion)"
+  logVersion "KERNEL" "$(getKernelVersion)"
+  logSection "APPS"
+  logVersion "INTELLIJ IDEA" "$(getIntellijIdeaVersion)"
+  logVersion "KEYSTORE EXPLORER" "$(getKeystoreExplorerVersion)"
+  logVersion "POSTMAN" "$(getPostmanVersion)"
+  logSection "VERSION CONTROL"
+  logVersion "GIT" "$(getGitVersion)"
+  logVersion "GIT LFS" "$(getGitLfsVersion)"
+  logSection "CLOUD"
+  logVersion "DOCKER CLIENT" "$(getDockerClientVersion)"
+  logVersion "DOCKER SERVER" "$(getDockerServerVersion)"
+  logVersion "CTOP" "$(getCtopVersion)"
+  logVersion "KUBECTL CLIENT" "$(getKubectlClientVersion)"
+  logVersion "KUBECTL SERVER" "$(getKubectlServerVersion)"
+  logVersion "KUBECTL KREW" "$(getKubectlKrewVersion)"
+  logVersion "MINIKUBE" "$(getMinikubeVersion)"
+  logVersion "HELM" "$(getHelmVersion)"
+  logVersion "K9S" "$(getK9sVersion)"
+  logSection "JAVA"
+  logVersion "SDKMAN" "$(getSdkManVersion)"
+  logVersion "JAVA" "$(getSdkManDependencyVersion "java")"
+  logVersion "MAVEN" "$(getSdkManDependencyVersion "maven")"
+  logVersion "SPRINGBOOT" "$(getSdkManDependencyVersion "springboot")"
+  logVersion "KAFKA" "$(getKafkaVersion)"
+  logVersion "TOMCAT" "$(getTomcatVersion)"
+  logSeparator
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0}
+
+Display dependency versions installed on the system
+EOF
+  exit 1
+}
+
+logSection() {
+  local sectionName="${1}"
+  logSeparator
+  printf "%b#%b %b%-43s%b %b#%b\n" \
+    "${YELLOW}" "${RESET}" \
+    "${GREEN}" "${sectionName}" "${RESET}"\
+    "${YELLOW}" "${RESET}"
+  logSeparator
+}
+
+logSeparator() {
+  printf "%b%s%b\n" "${YELLOW}" "${SEPARATOR}" "${RESET}"
+}
+
+logVersion() {
+  printf "%b|%b %-20s %b|%b %-20s %b|%b\n" \
+    "${YELLOW}" "${RESET}" \
+    "${1}" \
+    "${YELLOW}" "${RESET}" \
+    "${2}" \
+    "${YELLOW}" "${RESET}"
+}
+
+main
