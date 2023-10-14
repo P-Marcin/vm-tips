@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Text Editor
+Exec=gedit %U
+Icon=org.gnome.gedit
+Terminal=false
+StartupNotify=false
+Actions=new-window;new-document;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=gedit --new-window
+
+[Desktop Action new-document]
+Name=New Document
+Exec=gedit --new-document

@@ -1,0 +1,540 @@
+#!/bin/bash -i
+# SETUP OR UPDATE DEV DEPENDENCIES
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+set +H          # DISABLE https://www.gnu.org/software/bash/manual/html_node/History-Interaction.html
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+readonly KUBECTL_KREW_DIR="${HOME}/.krew"
+readonly USR_LOCAL_BIN_DIR="/usr/local/bin"
+# UNCOMMENTED: VERSIONS HANDLED BY THIS SCRIPT
+# COMMENTED:   VERSIONS UPDATE HANDLED BY ./setupVm
+readonly INTELLIJ_IDEA_VERSION="2023.3.6"        # https://www.jetbrains.com/idea/download/other.html
+readonly KEYSTORE_EXPLORER_VERSION="5.5.3"       # https://github.com/kaikramer/keystore-explorer/releases
+readonly POSTMAN_VERSION="latest"                # https://www.postman.com/release-notes/postman-app
+# GIT:                                             https://git-scm.com/downloads
+# GIT LFS:                                         https://github.com/git-lfs/git-lfs/releases
+# DOCKER:                                          https://docs.docker.com/engine/release-notes OR https://github.com/moby/moby/releases
+readonly CTOP_VERSION="0.7.7"                    # https://github.com/bcicen/ctop/releases
+readonly KUBECTL_VERSION="1.29.3"                # https://kubernetes.io/releases OR https://github.com/kubernetes/kubernetes/releases
+readonly KUBECTL_KREW_VERSION="0.4.4"            # https://github.com/kubernetes-sigs/krew/releases
+readonly MINIKUBE_VERSION="1.32.0"               # https://github.com/kubernetes/minikube/releases
+readonly HELM_VERSION="3.14.3"                   # https://github.com/helm/helm/releases
+readonly K9S_VERSION="0.32.4"                    # https://github.com/derailed/k9s/releases
+readonly SDKMAN_VERSION="5.18.2"                 # https://github.com/sdkman/sdkman-cli/releases
+readonly JAVA_VERSION="21.0.2-oracle"            # https://www.java.com/releases
+readonly MAVEN_VERSION="3.9.6"                   # https://maven.apache.org/docs/history.html
+readonly SPRING_BOOT_VERSION="3.2.4"             # https://github.com/spring-projects/spring-boot/releases
+readonly KAFKA_VERSION="3.7.0"                   # https://kafka.apache.org/downloads
+readonly TOMCAT_VERSION="10.1.20"                # https://tomcat.apache.org/whichversion
+
+main() {
+  options "${ARGS[@]}"
+  validateOperatingSystemSupport
+  chownOpt
+  setupIntellijIdea
+  setupKeystoreExplorer
+  setupPostman
+  setupGit
+  setupGitLfs
+  setupDocker
+  setupCtop
+  setupKubectl
+  setupKubectlKrew
+  setupMinikube
+  setupHelm
+  setupK9s
+  setupSdkMan
+  setupUsingSdkMan "java" "${JAVA_VERSION}"
+  setupUsingSdkMan "maven" "${MAVEN_VERSION}"
+  setupUsingSdkMan "springboot" "${SPRING_BOOT_VERSION}"
+  flushSdkMan
+  setupKafka
+  setupTomcat
+  validateSystemRestartRequired
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      -i | --idea) REINSTALL_INTELLIJ_IDEA="true";;
+      -p | --postman) REINSTALL_POSTMAN="true";;
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0} [OPTION]...
+
+Setup or update DEV dependencies
+
+OPTIONS:
+  -i, --idea      Reinstall IntelliJ IDEA ${INTELLIJ_IDEA_VERSION}
+  -p, --postman   Reinstall Postman ${POSTMAN_VERSION}
+EOF
+  exit 1
+}
+
+chownOpt() {
+  if ! isOwnerEqualToUser "${OPT_DIR}"; then
+    logStep ">" "Change owner of \"${OPT_DIR}\" to \"${USER}\""
+    sudo chown -R "${USER}" "${OPT_DIR}" \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+setupIntellijIdea() {
+  local isNotInstalled="$([[ ! -d "${OPT_DIR}/intellij-idea" ]] && printf "true")"
+  if isInstallOrReinstall "IntelliJ IDEA" "${INTELLIJ_IDEA_VERSION}" "${isNotInstalled}" "${REINSTALL_INTELLIJ_IDEA}"; then
+    installDependencyTarGz "intellij-idea" "https://download.jetbrains.com/idea/ideaIC-${INTELLIJ_IDEA_VERSION}.tar.gz" \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+setupKeystoreExplorer() {
+  if isInstallOrUpdate "Keystore Explorer" "${KEYSTORE_EXPLORER_VERSION}" "$(getKeystoreExplorerVersion)"; then
+    installDependencyDeb "kse" "https://github.com/kaikramer/keystore-explorer/releases/download/v${KEYSTORE_EXPLORER_VERSION}/kse_${KEYSTORE_EXPLORER_VERSION}_all.deb" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupPostman() {
+  local isNotInstalled="$([[ ! -d "${OPT_DIR}/postman" ]] && printf "true")"
+  if isInstallOrReinstall "Postman" "${POSTMAN_VERSION}" "${isNotInstalled}" "${REINSTALL_POSTMAN}"; then
+    installDependencyTarGz "postman" "https://dl.pstmn.io/download/${POSTMAN_VERSION}/linux64" \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+setupGit() {
+  if ! isPackageInstalled "git"; then
+    logStep ">" "Install Git"
+    sudo add-apt-repository ppa:git-core/ppa \
+      && sudo apt-get update \
+      && sudo apt-get install git \
+      && configureGit "init.defaultBranch" "main" \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+configureGit() {
+  if ! isPackageInstalled "git"; then
+    return 1
+  fi
+  local key="${1}"
+  local value="${2}"
+  logOperation ">>" "In Git set \"${key}=${value}\""
+  (
+    git config --global "${key}" "${value}" >/dev/null
+  ) &
+  logProgress
+}
+
+setupGitLfs() {
+  if ! isPackageInstalled "git-lfs"; then
+    logStep ">" "Install Git LFS"
+    curl -s "https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh" | sudo bash \
+      && sudo apt-get update \
+      && sudo apt-get install git-lfs \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+setupDocker() {
+  if ! isPackageInstalled "docker"; then
+    logStep ">" "Install Docker"
+    curl -s "https://get.docker.com" | bash \
+      && manageDockerAsNonRootUser \
+      && startDockerAndContainerd \
+      && makeConnectionToDockerSocketPossible \
+      && enableBashCompletion "docker" \
+      && enableIpV4Forwarding \
+      && enableMemorySwap \
+      && logDone "\n" \
+      || logError "" "\n"
+  fi
+}
+
+manageDockerAsNonRootUser() {
+  if ! grep -q "docker" "/etc/group"; then
+    logOperation ">>" "Create \"docker\" group"
+    (
+      sudo groupadd "docker" >/dev/null
+    ) &
+    logProgress
+  fi
+  if ! grep -q "docker.*${USER}" "/etc/group"; then
+    logOperation ">>" "Add \"${USER}\" to \"docker\" group"
+    (
+      sudo usermod --append --groups "docker" "${USER}" >/dev/null
+    ) &
+    logProgress
+    newgrp "docker" >/dev/null
+  fi
+}
+
+startDockerAndContainerd() {
+  logOperation ">>" "Enable and start docker"
+  (
+    sudo systemctl enable docker >/dev/null \
+      && sudo systemctl start docker >/dev/null
+  ) &
+  logProgress
+  logOperation ">>" "Enable and start containerd"
+  (
+    sudo systemctl enable containerd >/dev/null \
+      && sudo systemctl start containerd >/dev/null
+  ) &
+  logProgress
+}
+
+makeConnectionToDockerSocketPossible() {
+  logOperation ">>" "Make connection to docker socket possible"
+  (
+    sudo chmod ug+rw "/var/run/docker.sock"
+  ) &
+  logProgress
+}
+
+enableBashCompletion() {
+  local dependency=${1}
+  logOperation ">>" "Enable Bash Completion for ${dependency^}"
+  if [[ -d "/etc/bash_completion.d" ]]; then
+    (
+    "${dependency}" completion bash | sudo tee "/etc/bash_completion.d/${dependency}" >/dev/null
+    ) &
+    logProgress
+  else
+    logError
+    logError "You don't have \"bash-completion\" installed"
+    logError "See: https://github.com/scop/bash-completion#installation"
+    return 1
+  fi
+}
+
+enableIpV4Forwarding() {
+  local file="/etc/sysctl.conf"
+  local key="net.ipv4.ip_forward"
+  local value="1"
+  logOperation ">>" "In \"${file}\" set \"${key}=${value}\""
+  (
+    if setProperty "${file}" "${key}" "${value}"; then
+      sudo sysctl -p >/dev/null \
+        && sudo systemctl restart NetworkManager docker >/dev/null
+    fi
+  ) &
+  logProgress
+}
+
+enableMemorySwap() {
+  local file="/etc/default/grub"
+  local key="GRUB_CMDLINE_LINUX"
+  local value=" cgroup_enable=memory swapaccount=1\""
+  logOperation ">>" "In \"${file}\" append \"${value}\" to \"${key}\""
+  (
+    if appendToProperty "${file}" "${key}" "${value}"; then
+      sudo update-grub >/dev/null
+    fi
+  ) &
+  logProgress
+}
+
+setupCtop() {
+  if isInstallOrUpdate "Ctop" "${CTOP_VERSION}" "$(getCtopVersion)"; then
+    installDependencyBinary "ctop" "https://github.com/bcicen/ctop/releases/download/v${CTOP_VERSION}/ctop-${CTOP_VERSION}-linux-amd64" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupKubectl() {
+  if isInstallOrUpdate "Kubectl" "${KUBECTL_VERSION}" "$(getKubectlClientVersion)"; then
+    installDependencyBinary "kubectl" "https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+      && enableBashCompletion "kubectl" \
+      && configureMinikube "kubernetes-version" "$(getKubectlClientVersion)" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupKubectlKrew() {
+  if ! isPackageInstalled "git"; then
+    logError "You don't have \"git\" installed."
+    logError "See: https://krew.sigs.k8s.io/docs/user-guide/setup/install"
+    exit 1
+  fi
+  if [[ ! -d "${KUBECTL_KREW_DIR}" ]]; then
+    logStep ">" "Install Kubectl Krew"
+    (
+      set -x
+      TEMP_DIR="$(mktemp -d)"
+      cd "${TEMP_DIR}" \
+        && OS="$(uname | tr '[:upper:]' '[:lower:]')" \
+        && ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" \
+        && KREW="krew-${OS}_${ARCH}" \
+        && curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" \
+        && tar zxvf "${KREW}.tar.gz" \
+        && ./"${KREW}" install krew
+      rm -r "${TEMP_DIR:?}"
+    ) && configureKubectlKrew \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logStep ">" "Update Kubectl Krew to ${KUBECTL_KREW_VERSION}"
+    local currentVersion="$(getKubectlKrewVersion)"
+    if [[ "${currentVersion}" != "${KUBECTL_KREW_VERSION}" ]]; then
+      kubectl krew upgrade \
+        && logDone "\n" \
+        || logError "" "\n"
+    else
+      logUpToDate "\n"
+    fi
+  fi
+}
+
+configureKubectlKrew() {
+  if [[ ! -d "${KUBECTL_KREW_DIR}" ]]; then
+    return 1
+  fi
+  local file="${HOME}/.bashrc"
+  logOperation ">>" "In \"${file}\" add Kubectl Krew to \${PATH}"
+  (
+    local content=$(cat << EOF
+# NEEDED BY KUBECTL TO BE ABLE TO FIND KREW PLUGIN
+export PATH="${KUBECTL_KREW_DIR}/bin:\${PATH}"
+EOF
+)
+    appendToFile "${file}" "${content}"
+  ) &
+  logProgress
+}
+
+setupMinikube() {
+  if isInstallOrUpdate "Minikube" "${MINIKUBE_VERSION}" "$(getMinikubeVersion)"; then
+    installDependencyBinary "minikube" "https://github.com/kubernetes/minikube/releases/download/v${MINIKUBE_VERSION}/minikube-linux-amd64" \
+      && enableBashCompletion "minikube" \
+      && configureMinikube "driver" "docker" \
+      && configureMinikube "kubernetes-version" "$(getKubectlClientVersion)" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+configureMinikube() {
+  if ! isPackageInstalled "minikube"; then
+    return 1
+  fi
+  local key="${1}"
+  local value="${2}"
+  logOperation ">>" "In Minikube set \"${key}=${value}\""
+  (
+    minikube config set "${key}" "${value}" &>/dev/null
+  ) &
+  logProgress
+}
+
+setupHelm() {
+  if isInstallOrUpdate "Helm" "${HELM_VERSION}" "$(getHelmVersion)"; then
+    installDependencyBinaryInTarGz "helm" "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" "linux-amd64/helm" \
+      && enableBashCompletion "helm" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupK9s() {
+  if isInstallOrUpdate "K9s" "${K9S_VERSION}" "$(getK9sVersion)"; then
+    installDependencyBinaryInTarGz "k9s" "https://github.com/derailed/k9s/releases/download/v${K9S_VERSION}/k9s_Linux_amd64.tar.gz" "k9s" "0" \
+      && enableBashCompletion "k9s" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupSdkMan() {
+  if [[ ! -d "${OPT_DIR}/sdkman" ]]; then
+    logStep ">" "Install SdkMan"
+    export SDKMAN_DIR="${OPT_DIR}/sdkman" \
+      && curl -s "https://get.sdkman.io" | bash \
+      && configureSdkMan \
+      && source "${SDKMAN_DIR}/bin/sdkman-init.sh" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    local currentVersion="$(getSdkManVersion)"
+    if [[ "${currentVersion}" != "${SDKMAN_VERSION}" ]]; then
+      logStep ">" "Update SdkMan to ${SDKMAN_VERSION}"
+      local output="$(sdk selfupdate && sdk update)"
+      printf "%s" "${output}" | grep -q "No update available" \
+        && printf "%s" "${output}" | grep -q "No new candidates found" \
+        && logUpToDate "\n" || (printf "%s" "${output}" && logDone "\n")
+    else
+      logStep ">" "Update SdkMan information about candidates"
+      local output="$(sdk update)"
+      printf "%s" "${output}" | grep -q "No new candidates found" \
+        && logUpToDate "\n" || (printf "%s\n" "${output}" && logDone "\n")
+    fi
+  fi
+}
+
+configureSdkMan() {
+  local file="${SDKMAN_DIR}/etc/config"
+  declare -A properties
+  properties["sdkman_auto_answer"]="true"
+  properties["sdkman_auto_env"]="true"
+  properties["sdkman_colour_enable"]="false"
+  properties["sdkman_selfupdate_feature"]="false"
+  for key in "${!properties[@]}"; do
+    local value="${properties["${key}"]}"
+    logOperation ">>" "In \"${file}\" set \"${key}=${value}\""
+    (
+      setProperty "${file}" "${key}" "${value}"
+    ) &
+    logProgress
+  done
+}
+
+setupUsingSdkMan() {
+  local dependency="${1}"
+  local version="${2}"
+  local currentVersion="$(getSdkManDependencyVersion "${dependency}")"
+  if [[ -z "${currentVersion}" ]]; then
+    logStep ">" "Install ${dependency^}"
+    sdk install "${dependency}" "${version}" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logStep ">" "Update ${dependency^} to ${version}"
+    if [[ "${version}" != "${currentVersion}" ]]; then
+      logStep ">>" "Install ${dependency^} ${version}"
+      sdk install "${dependency}" "${version}" \
+        && logStep ">>" "Uninstall ${dependency^} ${currentVersion}" \
+        && sdk uninstall "${dependency}" "${currentVersion}" \
+        && logDone "\n" \
+        || logError "" "\n"
+    else
+      logUpToDate "\n"
+    fi
+  fi
+}
+
+flushSdkMan() {
+  sdk flush >/dev/null
+}
+
+setupKafka() {
+  if isInstallOrUpdate "Kafka" "${KAFKA_VERSION}" "$(getKafkaVersion)"; then
+    installDependencyTarGz "kafka" "https://downloads.apache.org/kafka/${KAFKA_VERSION}/kafka-${KAFKA_VERSION}-src.tgz" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+setupTomcat() {
+  if isInstallOrUpdate "Tomcat" "${TOMCAT_VERSION}" "$(getTomcatVersion)"; then
+    installDependencyTarGz "tomcat" "https://dlcdn.apache.org/tomcat/tomcat-10/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz" \
+      && logDone "\n" \
+      || logError "" "\n"
+  else
+    logUpToDate "\n"
+  fi
+}
+
+# UTILITY METHODS
+
+isInstallOrUpdate() {
+  local dependencyName="${1}"
+  local version="${2}"
+  local currentVersion="${3}"
+  [[ -z "${currentVersion}" ]] \
+    && logStep ">" "Install ${dependencyName}" \
+    || (logStep ">" "Update ${dependencyName} to ${version}"; [[ "${version}" != "${currentVersion}" ]])
+}
+
+isInstallOrReinstall() {
+  local dependencyName="${1}"
+  local version="${2}"
+  local isNotInstalled="${3}"
+  local reinstallFlag="${4}"
+  [[ "${isNotInstalled}" == "true" ]] \
+    && logStep ">" "Install ${dependencyName}" \
+    || ([[ "${reinstallFlag}" == "true" ]] && logStep ">" "Reinstall ${dependencyName} ${version}")
+}
+
+installDependencyTarGz() {
+  local dependency="${1}"
+  local url="${2}"
+  local stripComponents="$([[ -n "${3}" ]] && printf "%s" "${3}" || printf "1")"
+  (
+    curl -Lo "${dependency}.tar.gz" "${url}" \
+      && [[ -d "${OPT_DIR}/${dependency}" ]] \
+      && rm -r "${OPT_DIR:?}/${dependency:?}"; \
+      mkdir "${OPT_DIR}/${dependency}" \
+      && tar --extract --gzip --file="${dependency}.tar.gz" --strip-components="${stripComponents}" -C "${OPT_DIR}/${dependency}" \
+      && rm "${dependency}.tar.gz"
+  )
+}
+
+installDependencyDeb() {
+  local dependency="${1}.deb"
+  local url="${2}"
+  (
+    curl -Lo "${dependency}" "${url}" \
+      && sudo apt-get install ./"${dependency}" \
+      && rm "${dependency}"
+  )
+}
+
+installDependencyBinary() {
+  local dependency="${1}"
+  local url="${2}"
+  (
+    sudo curl -Lo "${USR_LOCAL_BIN_DIR}/${dependency}" "${url}" \
+      && sudo chmod +x "${USR_LOCAL_BIN_DIR}/${dependency}"
+  )
+}
+
+installDependencyBinaryInTarGz() {
+  local dependency="${1}"
+  local url="${2}"
+  local pathInTarGz="$([[ -n "${3}" ]] && printf "%s" "${3}" || printf "%s" "${dependency}")"
+  local stripComponents="$([[ -n "${4}" ]] && printf "%s" "${4}" || printf "1")"
+  (
+    curl -Lo "${dependency}.tar.gz" "${url}" \
+      && sudo tar --extract --gzip --file="${dependency}.tar.gz" --strip-components="${stripComponents}" -C "${USR_LOCAL_BIN_DIR}" "${pathInTarGz}" \
+      && sudo chmod +x "${USR_LOCAL_BIN_DIR}/${dependency}" \
+      && rm "${dependency}.tar.gz"
+  )
+}
+
+main

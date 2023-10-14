@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Firefox
+Exec=env BAMF_DESKTOP_FILE_HINT=/var/lib/snapd/desktop/applications/firefox_firefox.desktop /snap/bin/firefox %u
+Icon=/snap/firefox/2987/default256.png
+Terminal=false
+StartupNotify=false
+Actions=NewWindow;NewPrivateWindow;
+
+[Desktop Action NewWindow]
+Name=Open a New Window
+Exec=env BAMF_DESKTOP_FILE_HINT=/var/lib/snapd/desktop/applications/firefox_firefox.desktop /snap/bin/firefox -new-window
+
+[Desktop Action NewPrivateWindow]
+Name=Open a New Private Window
+Exec=env BAMF_DESKTOP_FILE_HINT=/var/lib/snapd/desktop/applications/firefox_firefox.desktop /snap/bin/firefox -private-window

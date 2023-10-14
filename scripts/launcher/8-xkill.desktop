@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=XKill
+Exec=xkill
+Icon=process-stop
+Terminal=false
+StartupNotify=false

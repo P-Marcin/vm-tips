@@ -1,0 +1,297 @@
+#!/bin/bash
+# SETUP OR UPDATE VM
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+
+main() {
+  options "${ARGS[@]}"
+  validateOperatingSystemSupport
+  disablePasswordPromptOnSudo
+  disableCoreDumps
+  enableSharedFolders
+  configureJournald
+  configureXfce
+  configureXfcePanel
+  createProjectsDir
+  updateVm
+  validateSystemRestartRequired
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      -a | --avatar) setupAvatar;;
+      -b | --background) setupBackground;;
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0} [OPTION]...
+
+Setup or update VM
+
+OPTIONS:
+  -a, --avatar          Change avatar (user profile image) to pictures/avatar.jpg
+  -b, --background      Change background to pictures/background.jpg
+EOF
+  exit 1
+}
+
+disablePasswordPromptOnSudo() {
+  if createFile "/etc/sudoers.d/${USER}" "${USER} ALL=(ALL) NOPASSWD: ALL"; then
+    logStep ">" "Disable password prompt on sudo"
+    logDone "\n"
+  fi
+}
+
+disableCoreDumps() {
+  local isDone="false"
+  replaceLine "/etc/security/limits.conf" "#\*.*soft.*core.*0" "* hard core 0" \
+    && isDone="true"
+  local content=$(cat << EOF
+# Disallow core dumping by setuid and setgid programs
+fs.suid_dumpable=0
+EOF
+)
+  appendToFile "/etc/sysctl.conf" "${content}" \
+    && isDone="true"
+  if [[ "${isDone}" == "true" ]]; then
+    logStep ">" "Disable core dumps"
+    sudo sysctl -p >/dev/null
+    logDone "\n"
+  fi
+}
+
+enableSharedFolders() {
+  if appendToFile "/etc/fstab" ".host:/ /mnt/hgfs fuse.vmhgfs-fuse defaults,allow_other 0 0"; then
+    logStep ">" "Enable shared folders"
+    logDone "\n"
+  fi
+}
+
+configureJournald() {
+  if setProperty "/etc/systemd/journald.conf" "SystemMaxUse" "100M"; then
+    logStep ">" "Configure journald"
+    sudo systemctl restart systemd-journald >/dev/null
+    logDone "\n"
+  fi
+}
+
+configureXfce() {
+  declare -A xfceProperties
+  xfceProperties["thunar"]="/last-show-hidden:true /misc-text-beside-icons:true /misc-change-window-icon:true /shortcuts-icon-size:THUNAR_ICON_SIZE_24"
+  xfceProperties["xfce4-desktop"]="/desktop-icons/show-hidden-files:true /desktop-icons/icon-size:42 /desktop-icons/tooltip-size:30"
+  xfceProperties["xfce4-panel"]="/panels/panel-0/position:p=8;x=0;y=0 /panels/panel-0/position-locked:true /panels/panel-0/size:32 /panels/panel-0/icon-size:22"
+  xfceProperties["xfce4-power-manager"]="/xfce4-power-manager/dpms-enabled:false"
+  xfceProperties["xfce4-screensaver"]="/lock/enabled:false /saver/enabled:false /saver/idle-activation/enabled:false"
+  xfceProperties["xfwm4"]="/general/theme:Numix /general/move_opacity:90 /general/resize_opacity:90"
+  xfceProperties["xsettings"]="/Net/ThemeName:Greybird-dark"
+  for channel in "${!xfceProperties[@]}"; do
+    configuration="${xfceProperties[${channel}]}"
+    for keyValue in ${configuration}; do
+      IFS=':' read -r key value <<< "${keyValue}"
+      if setXfconfProperty "${channel}" "${key}" "${value}"; then
+        if [[ "${isFirstIteration}" != "false" ]]; then
+          logStep ">" "Configure XFCE"
+          local isFirstIteration="false"
+          local isTriggered="true"
+        fi
+        logStep ">>" "Channel ${channel}: set ${key} to ${value}"
+      fi
+    done
+  done
+  if [[ "${isTriggered}" == "true" ]]; then
+    logDone "\n"
+  fi
+}
+
+setXfconfProperty() {
+  channel="${1}"
+  key="${2}"
+  value="${3}"
+  if ! isPackageInstalled "xfconf-query"; then
+    logError "You don't have \"xfconf-query\" installed"
+    exit 1
+  fi
+  if [[ "$(xfconf-query --channel "${channel}" --property "${key}" | sed "s/,000000//")" != "${value}" ]]; then
+    xfconf-query --channel "${channel}" --property "${key}" --set "${value}"
+  else
+    return 10
+  fi
+}
+
+configureXfcePanel() {
+  local launcherIdsOutput="$(xfconf-query --channel "xfce4-panel" --property "/panels/panel-0/plugin-ids" | grep --invert "array" | tr "\n" " ")"
+  for file in "launcher"/*; do
+    if [[ -f "${file}" ]]; then
+      local fileName="$(basename "${file}")"
+      if ! find "${HOME}/.config/xfce4/panel" -type f -name "${fileName}" | grep -q "."; then
+        if [[ "${isFirstIteration}" != "false" ]]; then
+          logStep ">" "Configure XFCE Panel"
+          local isFirstIteration="false"
+          local isTriggered="true"
+        fi
+        createLauncher "${fileName}"
+      fi
+    fi
+  done
+  restartPanel "${launcherIdsOutput}"
+  if [[ "${isTriggered}" == "true" ]]; then
+    logDone "\n"
+  fi
+}
+
+createLauncher() {
+  local fileName="${1}"
+  logStep ">>" "Create launcher from ${fileName}"
+  xfce4-panel --add "launcher"
+  local lastId="$(xfconf-query --channel "xfce4-panel" --property "/panels/panel-0/plugin-ids" | tail -1)"
+  if [[ ! -d "${HOME}/.config/xfce4/panel/launcher-${lastId}" ]]; then
+    mkdir --parents "${HOME}/.config/xfce4/panel/launcher-${lastId}"
+  fi
+  cp "launcher/${fileName}" "${HOME}/.config/xfce4/panel/launcher-${lastId}"
+  xfconf-query --channel "xfce4-panel" --property "/plugins/plugin-${lastId}/items" --set "${fileName}" --type "string" --force-array --create
+  printf "%s " "${lastId}" >> "/tmp/orderedLauncherIds"
+}
+
+restartPanel() {
+  if [[ ! -f "/tmp/orderedLauncherIds" ]]; then
+    return 0
+  fi
+  local launcherIdsOutput="${1}"
+  local orderedLauncherIdsOutput="$(cat "/tmp/orderedLauncherIds")"
+  rm "/tmp/orderedLauncherIds"
+  read -r -a launcherIds <<< "${launcherIdsOutput}"
+  read -r -a orderedLauncherIds <<< "${orderedLauncherIdsOutput}"
+  local commandFlags
+  local i=1
+  for launcherId in "${launcherIds[@]}"; do
+    if [[ "${i}" == "2" ]]; then
+      for orderedLauncherId in "${orderedLauncherIds[@]}"; do
+        commandFlags+="--type int --set ${orderedLauncherId} "
+      done
+    fi
+    commandFlags+="--type int --set ${launcherId} "
+    (( i++ ))
+  done
+  xfconf-query --channel "xfce4-panel" --property "/panels/panel-0/plugin-ids" ${commandFlags}
+  xfce4-panel --quit
+  xfce4-panel &>/dev/null &
+  sleep 0.5
+}
+
+createProjectsDir() {
+  local dir="${HOME}/projects"
+  if [[ ! -d "${dir}" ]]; then
+    logStep ">" "Create ${dir}"
+    mkdir "${dir}"
+    logDone "\n"
+  fi
+}
+
+updateVm() {
+  logStep ">" "Update VM"
+  logStep ">>" "Update package list"
+  sudo apt-get update
+  logStep ">>" "Upgrade packages"
+  local tempFile=$(mktemp)
+  sudo apt-get dist-upgrade | tee "${tempFile}"
+  local keptBackPackages=$(cat "${tempFile}" | awk "/The following packages have been kept back:/,/upgraded/" | grep "  "| sed "s/  //" | tr "\n" " ")
+  rm "${tempFile}"
+  if [[ -n "${keptBackPackages}" ]]; then
+    logStep ">>" "Install kept back packages"
+    sudo apt-get install ${keptBackPackages}
+    logStep ">>" "Mark kept back packages as automatically installed"
+    sudo apt-mark auto ${keptBackPackages}
+  fi
+  logStep ">>" "Remove all unused packages"
+  sudo apt-get autoremove --purge
+  logStep ">>" "Erase old downloaded archive files"
+  sudo apt-get autoclean
+  logDone "\n"
+}
+
+setupAvatar() {
+  validateXdotool
+  logStep ">" "Setup Avatar"
+  copyFileToHomePictures "avatar.jpg"
+  local pid="$(xdotoolWindowPid "Mugshot")"
+  if [[ -z "${pid}" ]]; then
+    logStep ">>" "Open \"User Settings\" window"
+    mugshot &>/dev/null &
+    local pid="$(xdotoolWindowPidSync "Mugshot")"
+  fi
+  xdotoolWindowRaiseAndFocusSync "${pid}"
+  logStep ">>" "Open \"Select\" window"
+  xdotool key "Return" sleep 0.2 key "Return" sleep 0.2
+  logStep ">>" "Select \"avatar.jpg\""
+  xdotool key "Left"  sleep 0.2 key --repeat 6 "Down" sleep 0.2 key "Return" sleep 0.2 key "Right" sleep 0.2 key "Return" sleep 0.2
+  logStep ">>" "Apply changes and close window"
+  xdotoolWindowRaiseAndFocusSync "${pid}"
+  xdotool key "Tab" sleep 0.2 key --repeat 3 "Down" sleep 0.2 key "Right" sleep 0.2 key "Return" sleep 0.2 key "Right" sleep 0.2 key "Return" sleep 0.2
+  logDone
+  exit 0
+}
+
+setupBackground() {
+  validateXdotool
+  logStep ">" "Setup Background"
+  copyFileToHomePictures "background.jpg"
+  local pid="$(xdotoolWindowPid "Xfdesktop-settings")"
+  if [[ -z "${pid}" ]]; then
+    logStep ">>" "Open \"Desktop Settings\" window"
+    xfdesktop --menu >/dev/null
+    xdotool key "Up" sleep 0.2 key "Return" sleep 0.2
+    local pid="$(xdotoolWindowPidSync "Xfdesktop-settings")"
+  fi
+  xdotoolWindowRaiseAndFocusSync "${pid}"
+  logStep ">>" "Set \"Style\" to \"Zoomed\""
+  xdotoolMouseMoveClickAndReset "${pid}" 488 447
+  xdotool key "Up" sleep 0.2 key "Return" sleep 0.2
+  logStep ">>" "Set \"Folder\" to \"Pictures\""
+  xdotoolMouseMoveClickAndReset "${pid}" 225 445
+  xdotool key --repeat 7 "Down" sleep 0.2 key "Return" sleep 0.2
+  logStep ">>" "Select \"background.jpg\""
+  xdotoolMouseMoveClickAndReset "${pid}" 300 182
+  logStep ">>" "Apply changes and close window"
+  xdotool windowclose "${pid}"
+  logDone
+  exit 0
+}
+
+# UTILITY METHODS
+
+validateXdotool() {
+  if ! isPackageInstalled "xdotool"; then
+    logError "Missing \"xdotool\" command. Install it first with ./setupPackages"
+    exit 1
+  fi
+}
+
+copyFileToHomePictures() {
+  local source="${1}"
+  local target="${HOME}/Pictures"
+  if [[ ! -f "picture/${source}" ]]; then
+    logError "Missing file: scripts/picture/${source}"
+    exit 1
+  fi
+  if isUpdateNeededForFile "picture/${source}" "${target}/${source}"; then
+    logStep ">>" "Copy scripts/picture/${source} to ${target}"
+    cp "picture/${source}" "${target}"
+  fi
+}
+
+main

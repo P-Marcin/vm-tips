@@ -1,0 +1,74 @@
+#!/bin/bash
+# SEARCH WINDOW BY CLASS WITH XDOTOOL AND LOG WINDOW PROPERTIES
+
+set -o errexit  # ABORT ON NON-ZERO EXIT STATUS
+set -o pipefail # DON'T HIDE ERRORS WITHIN PIPES
+
+# DEPENDENCY
+if [[ -f "$(dirname "${0}")/functions.sh" ]]; then
+  . "$(dirname "${0}")/functions.sh"
+fi
+
+# CONSTANTS
+readonly ARGS=( "${@}" )
+
+main() {
+  options "${ARGS[@]}"
+  validateXdotoolAndXprop
+  logProperties
+}
+
+validateXdotoolAndXprop() {
+  if ! isPackageInstalled "xdotool"; then
+    logError "Missing \"xdotool\" command. Install it first with ./setupPackages"
+    exit 1
+  fi
+  if ! isPackageInstalled "xprop"; then
+    logError "Missing \"xprop\" command. Install it first with ./setupPackages"
+    exit 1
+  fi
+}
+
+options() {
+  while (( ${#} > 0 )); do
+    case "${1}" in
+      -n | --name) SEARCH_BY_NAME="true";;
+      *) help;;
+    esac
+    shift
+  done
+}
+
+help() {
+  cat << EOF
+Usage: ${0} [OPTION]...
+
+Search window by class with xdotool and log window properties
+
+OPTIONS:
+  -n, --name          Search window by name
+EOF
+  exit 1
+}
+
+logProperties() {
+  local properties="$(xprop | grep --extended-regexp 'WM_CLASS|WM_NAME' | grep --invert-match "_NET" | tr -d "\"" | sed "s/WM_NAME.*= /NAME=/;s/WM_CLASS.*, /CLASS=/")"
+  local mouseLocation="$(xdotool getmouselocation --shell)"
+  if [[ "${SEARCH_BY_NAME}" == "true" ]]; then
+    local pid="$(xdotool search --limit 1 --onlyvisible --name "$(echo "${properties}" | grep "NAME=" | cut --delimiter "=" --fields 2)")"
+  else
+    local pid="$(xdotool search --limit 1 --onlyvisible --class "$(echo "${properties}" | grep "CLASS=" | cut --delimiter "=" --fields 2)")"
+  fi
+  local windowLocation="$(xdotool getwindowgeometry --shell "${pid}")"
+  relativeX=$(($(echo "${mouseLocation}" | grep "X=" | cut --delimiter "=" --fields 2) - $(echo "${windowLocation}" | grep "X=" | cut --delimiter "=" --fields 2)))
+  relativeY=$(($(echo "${mouseLocation}" | grep "Y=" | cut --delimiter "=" --fields 2) - $(echo "${windowLocation}" | grep "Y=" | cut --delimiter "=" --fields 2)))
+  cat << EOF
+${properties}
+
+MOUSE LOCATION RELATIVE TO WINDOW:
+X=${relativeX}
+Y=${relativeY}
+EOF
+}
+
+main
